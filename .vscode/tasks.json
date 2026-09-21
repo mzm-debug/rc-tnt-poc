@@ -1,0 +1,18 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run RC TNT",
+      "type": "shell",
+      "command": "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests",
+      "type": "shell",
+      "command": "pytest -q",
+      "problemMatcher": []
+    }
+  ]
+}

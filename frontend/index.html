@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>RC TNT LangGraph Lab</title>
+<style>
+:root{--p:#4e3ca7;--b:#e6e2f1;--bg:#f6f7fb;--ok:#17795b;--warn:#a96b00}
+*{box-sizing:border-box}
+body{font-family:Inter,Arial,sans-serif;margin:0;background:var(--bg);color:#191628}
+header{padding:16px 22px;background:#fff;border-bottom:1px solid var(--b);display:flex;justify-content:space-between;align-items:center}
+h1{font-size:20px;margin:0;color:var(--p)} h3{margin-top:0}.sub{color:#736d82;font-size:12px;margin-top:4px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:14px;padding:14px}
+.card{background:#fff;border:1px solid var(--b);border-radius:12px;padding:14px;overflow:auto}
+button,select{padding:8px 10px;border-radius:8px;border:1px solid var(--p);background:#fff;color:var(--p);font-weight:700}
+button.primary{background:var(--p);color:#fff}.toolbar{display:flex;gap:8px;flex-wrap:wrap}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.n{border:1px solid #cfc8e9;border-radius:9px;padding:8px;font-size:11px}.n b{color:var(--p)}
+pre{background:#171420;color:#eeeaf8;padding:12px;border-radius:10px;overflow:auto;max-height:640px;font-size:11px;white-space:pre-wrap}
+table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:7px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
+.badge{background:#e8f6f0;color:var(--ok);border-radius:10px;padding:4px 8px;font-size:10px;font-weight:700}
+#approval{display:none;border:1px solid #e4b65f;background:#fff8e9;padding:12px;border-radius:10px;margin-top:12px}
+.approval-title{font-weight:800;color:var(--warn);margin-bottom:8px}
+@media(max-width:1000px){main{grid-template-columns:1fr}.flow{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>RC TNT — LangGraph End-to-End Lab</h1>
+    <div class="sub">FastAPI + LangGraph + Fake SI Excel + HITL</div>
+  </div>
+  <span class="badge" id="health">...</span>
+</header>
+
+<main>
+<section>
+  <div class="card">
+    <div class="toolbar">
+      <select id="alarm"></select>
+      <button class="primary" onclick="runWorkflow()">Lancer</button>
+      <button onclick="resetData()">Reset</button>
+    </div>
+
+    <div class="flow">
+      <div class="n"><b>1. Alarm</b><br>DataMiner</div>
+      <div class="n"><b>2. Prequal</b><br>Agent</div>
+      <div class="n"><b>3. Duplicate</b><br>Skill</div>
+      <div class="n"><b>4. Context</b><br>SNOW/DMA/Diabolo</div>
+      <div class="n"><b>5. Veracity</b><br>Agent</div>
+      <div class="n"><b>6. History</b><br>Skill</div>
+      <div class="n"><b>7. Resolution</b><br>Agent</div>
+      <div class="n"><b>8. Policy/HITL</b><br>Decision</div>
+      <div class="n"><b>9. Action</b><br>Tool mock</div>
+      <div class="n"><b>10. Recheck</b><br>DataMiner</div>
+      <div class="n"><b>11. Material</b><br>Fallback</div>
+      <div class="n"><b>12. Close</b><br>ServiceNow</div>
+    </div>
+
+    <div id="approval">
+      <div class="approval-title">Validation humaine nécessaire</div>
+      <div id="approvalText"></div>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="primary" onclick="resume(true)">Approuver</button>
+        <button onclick="resume(false)">Refuser</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>Alarmes DataMiner</h3>
+    <div id="alarms"></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>INC ServiceNow</h3>
+    <div id="incs"></div>
+  </div>
+</section>
+
+<aside class="card">
+  <h3>State / trace LangGraph</h3>
+  <pre id="out">Lance un scénario.</pre>
+</aside>
+</main>
+
+<script>
+let currentExecution = null;
+
+async function api(url,opt){
+  const r = await fetch(url,opt);
+  const body = await r.json();
+  if(!r.ok) throw new Error(JSON.stringify(body));
+  return body;
+}
+
+function esc(v){
+  return String(v ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;");
+}
+
+function table(rows){
+  if(!rows.length) return "Aucune donnée";
+  const keys = Object.keys(rows[0]);
+  return "<table><tr>" +
+    keys.map(k=>"<th>"+esc(k)+"</th>").join("") +
+    "</tr>" +
+    rows.map(r=>"<tr>"+
+      keys.map(k=>"<td>"+esc(r[k])+"</td>").join("")+
+      "</tr>").join("") +
+    "</table>";
+}
+
+async function refresh(){
+  const [alarms,incs,h] = await Promise.all([
+    api("/api/alarms"),
+    api("/api/incidents"),
+    api("/api/health")
+  ]);
+
+  document.getElementById("alarms").innerHTML = table(alarms);
+  document.getElementById("incs").innerHTML = table(incs);
+  document.getElementById("health").textContent = h.status+" / "+h.engine;
+
+  const select = document.getElementById("alarm");
+  const selected = select.value;
+  select.innerHTML = alarms.map(a =>
+    '<option value="'+esc(a.alarm_id)+'">'+
+    esc(a.alarm_id)+" — "+esc(a.description)+
+    "</option>"
+  ).join("");
+
+  if(selected) select.value = selected;
+}
+
+function render(result){
+  currentExecution = result.execution_id;
+  document.getElementById("out").textContent =
+    JSON.stringify(result,null,2);
+
+  const box = document.getElementById("approval");
+
+  if(result.interrupt){
+    box.style.display = "block";
+    document.getElementById("approvalText").textContent =
+      JSON.stringify(result.interrupt,null,2);
+  }else{
+    box.style.display = "none";
+  }
+}
+
+async function runWorkflow(){
+  try{
+    const id = document.getElementById("alarm").value;
+    const result = await api(
+      "/api/workflows/rc-tnt/"+encodeURIComponent(id),
+      {method:"POST"}
+    );
+    render(result);
+    await refresh();
+  }catch(e){
+    alert(e.message);
+  }
+}
+
+async function resume(approved){
+  if(!currentExecution) return;
+
+  try{
+    const result = await api(
+      "/api/workflows/"+currentExecution+"/resume",
+      {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({approved})
+      }
+    );
+    render(result);
+    await refresh();
+  }catch(e){
+    alert(e.message);
+  }
+}
+
+async function resetData(){
+  await api("/api/reset",{method:"POST"});
+  currentExecution = null;
+  document.getElementById("approval").style.display = "none";
+  document.getElementById("out").textContent = "Données réinitialisées.";
+  await refresh();
+}
+
+refresh();
+</script>
+</body>
+</html>
